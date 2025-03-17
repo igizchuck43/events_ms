@@ -6,6 +6,31 @@ $database = new Database();
 $db = $database->getConnection();
 $auth = new Auth($db);
 
+// Initialize rate limiting
+$max_attempts = 5;
+$lockout_time = 900; // 15 minutes in seconds
+$ip_address = $_SERVER['REMOTE_ADDR'];
+
+// Check for previous failed attempts
+$query = "SELECT attempts, last_attempt FROM login_attempts WHERE ip_address = :ip";
+$stmt = $db->prepare($query);
+$stmt->bindParam(':ip', $ip_address);
+$stmt->execute();
+$attempt_data = $stmt->fetch(PDO::FETCH_ASSOC);
+
+if ($attempt_data) {
+    if ($attempt_data['attempts'] >= $max_attempts && 
+        time() - strtotime($attempt_data['last_attempt']) < $lockout_time) {
+        die('Too many failed login attempts. Please try again later.');
+    } elseif (time() - strtotime($attempt_data['last_attempt']) > $lockout_time) {
+        // Reset attempts after lockout period
+        $query = "UPDATE login_attempts SET attempts = 0 WHERE ip_address = :ip";
+        $stmt = $db->prepare($query);
+        $stmt->bindParam(':ip', $ip_address);
+        $stmt->execute();
+    }
+}
+
 $error = '';
 
 if($auth->isLoggedIn()) {
@@ -22,10 +47,27 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
         
         try {
             if($auth->login($email, $password)) {
+                // Reset failed attempts on successful login
+                $query = "DELETE FROM login_attempts WHERE ip_address = :ip";
+                $stmt = $db->prepare($query);
+                $stmt->bindParam(':ip', $ip_address);
+                $stmt->execute();
+                
                 header('Location: index.php');
                 exit();
             } else {
+                // Record failed attempt
+                if ($attempt_data) {
+                    $query = "UPDATE login_attempts SET attempts = attempts + 1, last_attempt = NOW() WHERE ip_address = :ip";
+                } else {
+                    $query = "INSERT INTO login_attempts (ip_address, attempts, last_attempt) VALUES (:ip, 1, NOW())";
+                }
+                $stmt = $db->prepare($query);
+                $stmt->bindParam(':ip', $ip_address);
+                $stmt->execute();
+                
                 $error = 'Invalid email or password';
+                error_log("Failed login attempt from IP: {$ip_address} with email: {$email}");
             }
         } catch(Exception $e) {
             $error = $e->getMessage();

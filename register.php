@@ -29,7 +29,19 @@ if($_SERVER['REQUEST_METHOD'] === 'POST') {
             $error = 'Passwords do not match';
         } else {
             try {
-                $stmt = $db->prepare("SELECT id FROM users WHERE email = ?")
+                // Add email format validation
+                if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+                    $error = 'Please enter a valid email address';
+                    return;
+                }
+
+                // Check password strength
+                if (!preg_match('/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[a-zA-Z\d]{8,}$/', $password)) {
+                    $error = 'Password must contain at least one uppercase letter, one lowercase letter, and one number';
+                    return;
+                }
+
+                $stmt = $db->prepare("SELECT id FROM users WHERE email = ?");
                 $stmt->execute([$email]);
                 if($stmt->fetch()) {
                     $error = 'Email already registered';
